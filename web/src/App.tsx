@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import {
@@ -8,24 +8,41 @@ import {
   type Market,
 } from './lib/markets'
 import {
+  appendClosed,
   equity,
   fmtPct,
   fmtProb,
   fmtUsd,
   loadPortfolio,
   previewTrade,
+  realizedPnlTotal,
   resetPortfolio,
   savePortfolio,
   unrealizedPnl,
+  type ClosedPosition,
   type PortfolioState,
   type Position,
   type Side,
 } from './lib/portfolio'
 
 type Tab = 'trade' | 'positions' | 'portfolio'
+type ToastKind = 'info' | 'error'
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function MarketSkeleton() {
+  return (
+    <div className="mkt-list" aria-hidden>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} className="mkt skeleton-row">
+          <div className="skel skel-lg" />
+          <div className="skel skel-sm" />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function App() {
@@ -34,6 +51,7 @@ export default function App() {
   const [markets, setMarkets] = useState<Market[]>(SEED_MARKETS)
   const [priceErr, setPriceErr] = useState<string | null>(null)
   const [liveOk, setLiveOk] = useState(false)
+  const [loadingMarks, setLoadingMarks] = useState(true)
   const [q, setQ] = useState('')
   const [filter, setFilter] = useState<'all' | 'prediction' | 'perp'>('all')
   const [selected, setSelected] = useState<Market>(SEED_MARKETS[0])
@@ -41,14 +59,18 @@ export default function App() {
   const [sizeStr, setSizeStr] = useState('100')
   const [levStr, setLevStr] = useState('5')
   const [portfolio, setPortfolio] = useState<PortfolioState>(() => loadPortfolio())
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null)
+  const firstFetch = useRef(true)
+  const toastTimer = useRef<number | null>(null)
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    window.setTimeout(() => setToast(null), 2800)
+  const showToast = (msg: string, kind: ToastKind = 'info') => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    setToast({ msg, kind })
+    toastTimer.current = window.setTimeout(() => setToast(null), 3200)
   }
 
   const refreshMarks = useCallback(async () => {
+    if (firstFetch.current) setLoadingMarks(true)
     setPriceErr(null)
     try {
       const live = await fetchLivePerpMarks(SEED_MARKETS)
@@ -61,17 +83,28 @@ export default function App() {
         })
       })
       setLiveOk(Object.keys(live).length > 0)
+      if (!Object.keys(live).length && !firstFetch.current) {
+        showToast('No live perp marks returned — using mocks', 'error')
+      }
     } catch (e) {
-      setPriceErr(e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      setPriceErr(msg)
       setLiveOk(false)
       setMarkets((prev) => driftPredictionMarks(prev))
+      showToast(`Price fetch failed (${msg}) — using mock marks`, 'error')
+    } finally {
+      firstFetch.current = false
+      setLoadingMarks(false)
     }
   }, [])
 
   useEffect(() => {
     refreshMarks()
     const t = window.setInterval(refreshMarks, 45_000)
-    return () => window.clearInterval(t)
+    return () => {
+      window.clearInterval(t)
+      if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    }
   }, [refreshMarks])
 
   useEffect(() => {
@@ -134,6 +167,7 @@ export default function App() {
     (s, p) => s + unrealizedPnl(p, marksMap[p.marketId] ?? p.entry),
     0,
   )
+  const rpnlTotal = realizedPnlTotal(portfolio)
 
   const canTrade =
     size > 0 &&
@@ -158,6 +192,7 @@ export default function App() {
       openedAt: Date.now(),
     }
     setPortfolio((prev) => ({
+      ...prev,
       cashUsd: prev.cashUsd - preview.margin,
       positions: [pos, ...prev.positions],
     }))
@@ -171,18 +206,27 @@ export default function App() {
       if (!pos) return prev
       const mark = marksMap[pos.marketId] ?? pos.entry
       const pnl = unrealizedPnl(pos, mark)
+      const closed: ClosedPosition = {
+        ...pos,
+        closedAt: Date.now(),
+        exitMark: mark,
+        realizedPnl: pnl,
+      }
       return {
         cashUsd: prev.cashUsd + pos.margin + pnl,
         positions: prev.positions.filter((p) => p.id !== id),
+        closed: appendClosed(prev.closed, closed),
       }
     })
-    showToast('Position closed')
+    showToast('Position closed — realized PnL saved')
   }
 
   function doReset() {
     setPortfolio(resetPortfolio())
     showToast('Demo portfolio reset to $10,000')
   }
+
+  const isPred = selected.kind === 'prediction'
 
   return (
     <div className="app">
@@ -206,9 +250,9 @@ export default function App() {
         <div>
           <h1>Trade events &amp; perps in one Solana desk</h1>
           <p>
-            Browse mock prediction markets and live crypto marks, size YES/NO or
-            long/short with leverage, and track PnL — no wallet required for the
-            demo.
+            Browse prediction markets and live crypto marks, size YES/NO or
+            Long/Short with leverage, and track open + closed PnL — no wallet
+            required for the demo.
           </p>
           <div className="stats">
             <div>
@@ -302,50 +346,78 @@ export default function App() {
               </button>
             </div>
             {priceErr && (
-              <div className="err">Live prices unavailable ({priceErr}) — using mocks.</div>
-            )}
-            <div className="mkt-list">
-              {filtered.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`mkt ${selected.id === m.id ? 'sel' : ''}`}
-                  onClick={() => setSelected(m)}
-                >
-                  <div>
-                    <div>
-                      <span className={`badge ${m.kind === 'prediction' ? 'pred' : 'perp'}`}>
-                        {m.kind}
-                      </span>
-                      <span className="sym">{m.symbol}</span>
-                    </div>
-                    <div className="ttl">{m.title}</div>
-                  </div>
-                  <div>
-                    <div className="px">
-                      {m.kind === 'prediction' ? fmtProb(m.mark) : fmtUsd(m.mark)}
-                    </div>
-                    <div className={`chg ${ (m.change24h ?? 0) >= 0 ? 'up' : 'down'}`}>
-                      {fmtPct(m.change24h)}
-                    </div>
-                  </div>
+              <div className="err">
+                Live prices unavailable ({priceErr}) — using mocks.{' '}
+                <button type="button" className="linkish" onClick={() => void refreshMarks()}>
+                  Retry
                 </button>
-              ))}
-              {!filtered.length && <div className="empty">No markets match.</div>}
-            </div>
+              </div>
+            )}
+            {loadingMarks ? (
+              <MarketSkeleton />
+            ) : (
+              <div className="mkt-list">
+                {filtered.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`mkt ${selected.id === m.id ? 'sel' : ''}`}
+                    onClick={() => setSelected(m)}
+                  >
+                    <div>
+                      <div>
+                        <span className={`badge ${m.kind === 'prediction' ? 'pred' : 'perp'}`}>
+                          {m.kind}
+                        </span>
+                        <span className="cat">{m.category}</span>
+                        <span className="sym">{m.symbol}</span>
+                      </div>
+                      <div className="ttl">{m.title}</div>
+                    </div>
+                    <div>
+                      <div className="px">
+                        {m.kind === 'prediction' ? fmtProb(m.mark) : fmtUsd(m.mark)}
+                      </div>
+                      <div className={`chg ${(m.change24h ?? 0) >= 0 ? 'up' : 'down'}`}>
+                        {fmtPct(m.change24h)}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {!filtered.length && (
+                  <div className="empty">
+                    <div className="empty-title">No markets match</div>
+                    <p>Clear search or switch filter to All / Predictions / Perps.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="panel">
             <h2>Trade ticket</h2>
+            <div className={`ticket-kind ${isPred ? 'pred' : 'perp'}`}>
+              {isPred ? (
+                <>
+                  <strong>Prediction · YES / NO</strong>
+                  <span>Binary event — pay YES price or (1−YES) for NO contracts.</span>
+                </>
+              ) : (
+                <>
+                  <strong>Perpetual · Long / Short</strong>
+                  <span>Leveraged base size — margin = notional ÷ leverage.</span>
+                </>
+              )}
+            </div>
             <div className="muted" style={{ marginBottom: 10 }}>
               {selected.symbol} · {selected.title}
               <div style={{ marginTop: 4 }}>{selected.meta}</div>
             </div>
 
             <div className="field">
-              <label>Side</label>
+              <label>{isPred ? 'Outcome (YES / NO)' : 'Direction (Long / Short)'}</label>
               <div className="side-row">
-                {selected.kind === 'prediction' ? (
+                {isPred ? (
                   <>
                     <button
                       type="button"
@@ -353,6 +425,7 @@ export default function App() {
                       onClick={() => setSide('yes')}
                     >
                       YES
+                      <span className="side-hint">Wins if event resolves true</span>
                     </button>
                     <button
                       type="button"
@@ -360,6 +433,7 @@ export default function App() {
                       onClick={() => setSide('no')}
                     >
                       NO
+                      <span className="side-hint">Wins if event resolves false</span>
                     </button>
                   </>
                 ) : (
@@ -370,6 +444,7 @@ export default function App() {
                       onClick={() => setSide('long')}
                     >
                       LONG
+                      <span className="side-hint">Profit when mark rises</span>
                     </button>
                     <button
                       type="button"
@@ -377,6 +452,7 @@ export default function App() {
                       onClick={() => setSide('short')}
                     >
                       SHORT
+                      <span className="side-hint">Profit when mark falls</span>
                     </button>
                   </>
                 )}
@@ -385,7 +461,7 @@ export default function App() {
 
             <div className="field">
               <label>
-                {selected.kind === 'prediction' ? 'Contracts' : 'Size (base)'}
+                {isPred ? 'Contracts' : 'Size (base units)'}
               </label>
               <input
                 inputMode="decimal"
@@ -394,7 +470,7 @@ export default function App() {
               />
             </div>
 
-            {selected.kind === 'perp' && (
+            {!isPred && (
               <div className="field">
                 <label>Leverage (1–50×)</label>
                 <input
@@ -409,13 +485,11 @@ export default function App() {
               <div className="row">
                 <span>Mark</span>
                 <span>
-                  {selected.kind === 'prediction'
-                    ? fmtProb(selected.mark)
-                    : fmtUsd(selected.mark)}
+                  {isPred ? fmtProb(selected.mark) : fmtUsd(selected.mark)}
                 </span>
               </div>
               <div className="row">
-                <span>Margin / cost</span>
+                <span>{isPred ? 'Cost' : 'Margin'}</span>
                 <span>{fmtUsd(preview.margin)}</span>
               </div>
               <div className="row">
@@ -464,7 +538,16 @@ export default function App() {
         <div className="panel">
           <h2>Open positions</h2>
           {!portfolio.positions.length && (
-            <div className="empty">No open positions — open a trade from Markets.</div>
+            <div className="empty">
+              <div className="empty-title">No open positions</div>
+              <p>
+                Open a YES/NO or Long/Short trade from{' '}
+                <button type="button" className="linkish" onClick={() => setTab('trade')}>
+                  Markets &amp; Trade
+                </button>
+                . Closed trades appear under Portfolio.
+              </p>
+            </div>
           )}
           <div className="pos-list">
             {portfolio.positions.map((p) => {
@@ -556,6 +639,10 @@ export default function App() {
                 <span className={upnlTotal >= 0 ? 'up' : 'down'}>{fmtUsd(upnlTotal)}</span>
               </div>
               <div className="row">
+                <span>Realized PnL (closed)</span>
+                <span className={rpnlTotal >= 0 ? 'up' : 'down'}>{fmtUsd(rpnlTotal)}</span>
+              </div>
+              <div className="row">
                 <span>Equity</span>
                 <span>{fmtUsd(eq)}</span>
               </div>
@@ -564,13 +651,62 @@ export default function App() {
               Reset demo portfolio ($10k)
             </button>
             <p className="muted" style={{ marginTop: 12 }}>
-              Persistence key <span className="mono">predlane.portfolio.v1</span>. Wallet
-              connect does not move demo balances — it is only for future on-chain
-              settlement demos.
+              Persistence key <span className="mono">predlane.portfolio.v1</span> (open +
+              closed). Wallet connect does not move demo balances — it is only for future
+              on-chain settlement demos.
             </p>
           </div>
           <div className="panel">
-            <h2>Why Solana</h2>
+            <h2>Closed positions</h2>
+            {!portfolio.closed.length && (
+              <div className="empty">
+                <div className="empty-title">No closed trades yet</div>
+                <p>Close an open position to record realized PnL here (kept locally).</p>
+              </div>
+            )}
+            <div className="pos-list">
+              {portfolio.closed.map((c) => (
+                <div key={`${c.id}-c`} className="pos closed">
+                  <div className="pos-head">
+                    <div>
+                      <span className={`badge ${c.kind === 'prediction' ? 'pred' : 'perp'}`}>
+                        {c.kind}
+                      </span>
+                      <strong>{c.symbol}</strong>{' '}
+                      <span className={c.side === 'yes' || c.side === 'long' ? 'up' : 'down'}>
+                        {c.side.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className={`mono ${c.realizedPnl >= 0 ? 'up' : 'down'}`}>
+                      {fmtUsd(c.realizedPnl)}
+                    </div>
+                  </div>
+                  <div className="pos-meta">
+                    Closed {new Date(c.closedAt).toLocaleString()} · size {c.size} ·{' '}
+                    {c.leverage}×
+                  </div>
+                  <div className="pos-grid">
+                    <div>
+                      <div className="l">Entry</div>
+                      <div className="v">
+                        {c.kind === 'prediction' ? fmtProb(c.entry) : fmtUsd(c.entry)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="l">Exit</div>
+                      <div className="v">
+                        {c.kind === 'prediction' ? fmtProb(c.exitMark) : fmtUsd(c.exitMark)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="l">Margin</div>
+                      <div className="v">{fmtUsd(c.margin)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <h2 style={{ marginTop: 18 }}>Why Solana</h2>
             <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--muted)' }}>
               <li>Sub-second fills &amp; cheap risk updates for perps</li>
               <li>Composable collateral, oracles, and keepers on one L1</li>
@@ -596,11 +732,22 @@ export default function App() {
             GitHub
           </a>
         </span>
+        <span>
+          <a
+            href="https://github.com/KvngJamesII/predlane/blob/main/docs/JUDGES.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Judges
+          </a>
+        </span>
         <span>MIT · IdleDev / KvngJamesII</span>
         <span className="mono">2Uup61Xjcqpyh9jfSNKBfHr4J1Ju7qjzDyUzFpdmduwW</span>
       </footer>
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className={`toast ${toast.kind === 'error' ? 'err-toast' : ''}`}>{toast.msg}</div>
+      )}
     </div>
   )
 }
