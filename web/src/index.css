@@ -241,3 +241,10 @@ a { color: var(--accent2); }
   border-color: #5a2230; background: #2a1218; color: #fecdd3;
 }
 .pos.closed { opacity: 0.92; }
+
+.hc-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.hc-actions a.chip { text-decoration: none; display: inline-flex; align-items: center; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.preset-row .chip { padding: 5px 10px; font-size: 0.78rem; }
+.mkt .vol { font-size: 0.7rem; text-align: right; margin-top: 2px; }
+.port-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

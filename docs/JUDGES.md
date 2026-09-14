@@ -9,10 +9,11 @@
 ## 60-second path (no wallet)
 
 1. Open the live demo — **Demo mode** is on by default; do **not** connect Phantom.
-2. **Markets & Trade** — browse prediction markets (YES/NO) and crypto perps (Long/Short). Live perp marks come from CoinGecko (falls back to mocks + toast if offline).
-3. Select a market → pick **YES/NO** (predictions) or **LONG/SHORT** (perps) → set size (and leverage for perps) → **Open … (demo)**.
-4. **Positions** — see open trades with mark, margin, uPnL, ROE → **Close** to realize PnL.
-5. **Portfolio** — equity / cash / uPnL summary + **closed positions** history (realized PnL) in `localStorage`.
+2. Optional shortcut: hero card **Seed judge demo (YES + LONG)** opens a sample prediction + SOL perp, then jumps to **Positions**.
+3. **Markets & Trade** — browse prediction markets (YES/NO) and crypto perps (Long/Short). Rows show mark, 24h %, and volume. Live perp marks come from CoinGecko (falls back to mocks + toast if offline).
+4. Select a market → pick **YES/NO** or **LONG/SHORT** → use size/leverage chips or type values → **Open … (demo)**.
+5. **Positions** — mark, margin, uPnL, ROE → **Close** to realize PnL.
+6. **Portfolio** — equity / cash / uPnL + closed history; **Export JSON** / **Import JSON** for handoff; reset restores $10k.
 
 Wallet connect is optional and never required to evaluate UX.
 
@@ -24,6 +25,7 @@ Wallet connect is optional and never required to evaluate UX.
 | Trade ticket | Clear YES/NO vs Long/Short; margin / notional / approx. liq preview |
 | Persistence | Open + closed positions + cash in `predlane.portfolio.v1` |
 | Resilience | Skeleton while loading; toast + mock marks if price API fails |
+| Handoff | Portfolio export/import JSON; seed judge demo for empty books |
 | Why Solana | Sub-second risk updates, composable collateral/oracles, same Phantom UX |
 
 ## Local

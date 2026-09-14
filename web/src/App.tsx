@@ -13,6 +13,7 @@ import {
   fmtPct,
   fmtProb,
   fmtUsd,
+  fmtVol,
   loadPortfolio,
   previewTrade,
   realizedPnlTotal,
@@ -62,6 +63,7 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null)
   const firstFetch = useRef(true)
   const toastTimer = useRef<number | null>(null)
+  const importRef = useRef<HTMLInputElement | null>(null)
 
   const showToast = (msg: string, kind: ToastKind = 'info') => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current)
@@ -226,6 +228,103 @@ export default function App() {
     showToast('Demo portfolio reset to $10,000')
   }
 
+  function seedJudgeDemo() {
+    const pred = markets.find((m) => m.id === 'pred-fed-cut') ?? markets.find((m) => m.kind === 'prediction')
+    const perp = markets.find((m) => m.id === 'perp-sol') ?? markets.find((m) => m.kind === 'perp')
+    if (!pred || !perp) {
+      showToast('Markets not ready — try again', 'error')
+      return
+    }
+    const predPrev = previewTrade({
+      kind: 'prediction',
+      side: 'yes',
+      size: 100,
+      entry: pred.mark,
+      leverage: 1,
+    })
+    const perpPrev = previewTrade({
+      kind: 'perp',
+      side: 'long',
+      size: 1,
+      entry: perp.mark,
+      leverage: 5,
+    })
+    const need = predPrev.margin + perpPrev.margin
+    if (portfolio.cashUsd < need) {
+      showToast('Need more demo cash — reset portfolio first', 'error')
+      return
+    }
+    const now = Date.now()
+    const predPos: Position = {
+      id: uid(),
+      marketId: pred.id,
+      symbol: pred.symbol,
+      kind: 'prediction',
+      side: 'yes',
+      size: 100,
+      entry: pred.mark,
+      leverage: 1,
+      margin: predPrev.margin,
+      openedAt: now,
+    }
+    const perpPos: Position = {
+      id: uid(),
+      marketId: perp.id,
+      symbol: perp.symbol,
+      kind: 'perp',
+      side: 'long',
+      size: 1,
+      entry: perp.mark,
+      leverage: 5,
+      margin: perpPrev.margin,
+      openedAt: now + 1,
+    }
+    setPortfolio((prev) => ({
+      ...prev,
+      cashUsd: prev.cashUsd - need,
+      positions: [perpPos, predPos, ...prev.positions],
+    }))
+    showToast('Seeded YES FEDCUT + LONG SOL-PERP — close one to see realized PnL')
+    setTab('positions')
+  }
+
+    function exportPortfolio() {
+    const blob = new Blob([JSON.stringify(portfolio, null, 2)], {
+      type: 'application/json',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `predlane-portfolio-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('Exported portfolio JSON')
+  }
+
+  function onImportFile(file: File | null) {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as Partial<PortfolioState>
+        if (typeof parsed.cashUsd !== 'number' || !Array.isArray(parsed.positions)) {
+          throw new Error('Invalid portfolio shape')
+        }
+        const next: PortfolioState = {
+          cashUsd: parsed.cashUsd,
+          positions: parsed.positions as Position[],
+          closed: Array.isArray(parsed.closed) ? (parsed.closed as ClosedPosition[]) : [],
+        }
+        setPortfolio(next)
+        showToast('Imported portfolio JSON')
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        showToast(`Import failed: ${msg}`, 'error')
+      }
+    }
+    reader.readAsText(file)
+  }
+
   const isPred = selected.kind === 'prediction'
 
   return (
@@ -296,6 +395,19 @@ export default function App() {
                 : 'optional — not needed'}
             </li>
           </ul>
+          <div className="hc-actions">
+            <button type="button" className="btn ghost" onClick={seedJudgeDemo}>
+              Seed judge demo (YES + LONG)
+            </button>
+            <a
+              className="chip"
+              href="https://github.com/KvngJamesII/predlane/blob/main/docs/JUDGES.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              60s path
+            </a>
+          </div>
           <div className="hc-foot">
             Owner IdleDev / KvngJamesII · MIT · payout docs wallet{' '}
             <span className="mono">2Uup…duwW</span>
@@ -381,6 +493,7 @@ export default function App() {
                       <div className={`chg ${(m.change24h ?? 0) >= 0 ? 'up' : 'down'}`}>
                         {fmtPct(m.change24h)}
                       </div>
+                      <div className="vol muted">{fmtVol(m.volumeUsd)} vol</div>
                     </div>
                   </button>
                 ))}
@@ -468,6 +581,18 @@ export default function App() {
                 value={sizeStr}
                 onChange={(e) => setSizeStr(e.target.value)}
               />
+              <div className="preset-row">
+                {(isPred ? ['50', '100', '250'] : ['0.1', '1', '5']).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`chip ${sizeStr === v ? 'on' : ''}`}
+                    onClick={() => setSizeStr(v)}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {!isPred && (
@@ -478,6 +603,18 @@ export default function App() {
                   value={levStr}
                   onChange={(e) => setLevStr(e.target.value)}
                 />
+                <div className="preset-row">
+                  {['2', '5', '10', '20'].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      className={`chip ${levStr === v ? 'on' : ''}`}
+                      onClick={() => setLevStr(v)}
+                    >
+                      {v}×
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -647,9 +784,31 @@ export default function App() {
                 <span>{fmtUsd(eq)}</span>
               </div>
             </div>
-            <button type="button" className="btn ghost" onClick={doReset}>
-              Reset demo portfolio ($10k)
-            </button>
+            <div className="port-actions">
+              <button type="button" className="btn ghost" onClick={doReset}>
+                Reset demo portfolio ($10k)
+              </button>
+              <button type="button" className="btn ghost" onClick={exportPortfolio}>
+                Export JSON
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => importRef.current?.click()}
+              >
+                Import JSON
+              </button>
+              <input
+                ref={importRef}
+                type="file"
+                accept="application/json,.json"
+                hidden
+                onChange={(e) => {
+                  onImportFile(e.target.files?.[0] ?? null)
+                  e.target.value = ''
+                }}
+              />
+            </div>
             <p className="muted" style={{ marginTop: 12 }}>
               Persistence key <span className="mono">predlane.portfolio.v1</span> (open +
               closed). Wallet connect does not move demo balances — it is only for future

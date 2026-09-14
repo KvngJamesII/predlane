@@ -18,8 +18,9 @@ Perps and prediction markets are booming — but traders bounce between venues, 
 |---------|-----|
 | Market list | Mock event markets (macro, crypto, Solana, policy) + live crypto marks via public APIs |
 | Trade ticket | YES/NO (predictions) or Long/Short (perps) with size, mock leverage, margin & PnL preview |
-| Positions | Open/close positions with unrealized PnL |
-| Portfolio | Demo USDC balance + equity + closed realized PnL history; `localStorage` |
+| Positions | Open/close positions with unrealized PnL; optional **Seed judge demo** |
+| Portfolio | Demo USDC + equity + closed PnL; export/import JSON; `localStorage` |
+| Market rows | Mark, 24h %, volume; size/leverage quick chips on the ticket |
 | Judge docs | [`docs/JUDGES.md`](docs/JUDGES.md) · submit draft [`docs/SUBMIT.md`](docs/SUBMIT.md) |
 | Demo mode | Full UX without connecting a wallet |
 | Optional wallet | `@solana/wallet-adapter` (Phantom / Solflare) — never required for demo |

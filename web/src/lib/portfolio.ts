@@ -127,6 +127,13 @@ export function fmtProb(p: number) {
   return `${(p * 100).toFixed(1)}¢`
 }
 
+export function fmtVol(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return '—'
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K`
+  return fmtUsd(n, 0)
+}
+
 /** Append a closed trade; keep newest MAX_CLOSED. */
 export function appendClosed(
   closed: ClosedPosition[],
